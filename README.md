@@ -1,6 +1,6 @@
 # claude-mods
 
-Private marketplace of Claude Code mods. One folder per mod under `mods/`.
+Marketplace of Claude Code mods, MIT licensed. One folder per mod under `mods/`.
 
 | Mod | What it does |
 | --- | --- |
