@@ -1,0 +1,70 @@
+import { expect, mock, test } from 'claude-code/testing'
+import type { On } from 'claude-code'
+
+// Op hooks beneath the plugin answer { value }.
+const ok = (payload: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify(payload), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+
+const FINDING = { severity: 'high', title: 'stale read', body: 'reads the collection before load resolves', file: 'store.ts', line_start: 4, recommendation: 'await load first' }
+
+// The engine beneath the plugin: the Codex companion answered from memory, by subcommand.
+function engineBelow(on: On) {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  mock.env(on, { HOME: '/home/t' })
+  const runs: string[][] = []
+  const submitted: string[] = []
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'relay' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('fs.read', () => ({ value: 'reading store.ts\nchecking load()' }))
+  on('prompt.submit', ($, e) => {
+    submitted.push(e.text)
+    return { text: e.text }
+  })
+  on('process.run', ($, e) => {
+    if (e.argv[1] === '--version') return ok('v24')
+    runs.push([...e.argv])
+    switch (e.argv[2]) {
+      case 'review':
+        return ok({ jobId: 'review-1' })
+      case 'status':
+        return ok({ job: { status: 'completed', logFile: '/log' } })
+      case 'result':
+        return ok({ storedJob: { result: { result: { verdict: 'needs_changes', summary: 'one race', findings: [FINDING], next_steps: [] } } } })
+      default:
+        return { value: { exitCode: 1, stdout: '', stderr: `unexpected ${e.argv[2]}`, isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+  })
+  return { clock, runs, submitted }
+}
+
+test('check runs a background Codex review, shows its finding and turns it into a fix prompt', async ($, on) => {
+  const { clock, runs, submitted } = engineBelow(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  const band = await $.ui.mount({
+    plugin: 'relay', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100 },
+  })
+  await band.press({ key: 'check' })
+
+  expect(runs[0]?.[1]).toBe('/home/t/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs')
+  expect(runs[0]?.slice(2)).toEqual(['review', '--background', '--json'])
+  expect(await band.find({ text: /codex review/ })).toBeDefined()
+
+  await clock.advance(2500)
+  expect(runs.map(r => r[2])).toEqual(['review', 'status', 'result'])
+
+  const pane = await $.ui.mount({
+    plugin: 'relay', surface: 'terminal', component: 'Pane', requestId: 'relay',
+    props: { title: 'relay', isFocused: true, bodyColumns: 100, placement: 'dock' },
+  })
+  expect(await pane.find({ text: /needs_changes/ })).toBeDefined()
+  expect(await pane.find({ text: /stale read/ })).toBeDefined()
+
+  await pane.press({ key: 'fix-review-1-0' })
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toMatch(/stale read/)
+  expect(submitted[0]).toMatch(/store\.ts:4/)
+  expect(submitted[0]).toMatch(/await load first/)
+})

@@ -1,0 +1,28 @@
+{
+  "name": "relay",
+  "version": "0.1.0",
+  "description": "Role buttons above the prompt: check or adversarially review the working tree with Codex, hand a task over to Codex, or verify with a second Claude model. A pane streams the run and turns findings into fix prompts.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "codexPluginRoot": {
+      "type": "string",
+      "title": "Codex plugin folder",
+      "description": "Folder holding scripts/codex-companion.mjs. Empty: ~/.claude/plugins/marketplaces/openai-codex/plugins/codex.",
+      "default": ""
+    },
+    "codexModel": {
+      "type": "string",
+      "title": "Codex model",
+      "description": "Passed as --model to Codex runs. Empty: Codex's own default.",
+      "default": ""
+    },
+    "verifyModel": {
+      "type": "string",
+      "title": "Verifier model",
+      "description": "Claude model alias or id for the verify role, run as a subagent.",
+      "default": "opus"
+    }
+  },
+  "author": { "name": "Tuncay Aydin" },
+  "license": "MIT"
+}
