@@ -13,6 +13,12 @@ A pane (`relay`) lists the last three runs: elapsed time and the Codex log tail 
 
 `/relay check | adversarial | hand <task> | verify` does the same from the prompt.
 
+## Install
+
+```
+/plugin install relay --marketplace hal-9/claude-mods
+```
+
 ## Requirements
 
 - The [openai-codex](https://github.com/openai/codex-plugin-cc) plugin installed and `codex` set up (`/codex:setup`). relay drives its `scripts/codex-companion.mjs` and shares its job state, so `/codex:status` and `/codex:result` see relay's runs too.

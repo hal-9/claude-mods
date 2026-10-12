@@ -5,6 +5,7 @@ Marketplace of Claude Code mods, MIT licensed. One folder per mod under `mods/`.
 | Mod | What it does |
 | --- | --- |
 | [baton](mods/baton) | Measures real context use per model request, stops subagents that run too long or too big, hands remaining work to a fresh session. |
+| [relay](mods/relay) | Role buttons above the prompt: review or adversarially review the working tree with Codex, hand a task to Codex, or verify with a second Claude model; findings become fix prompts. |
 
 ## Install a mod
 

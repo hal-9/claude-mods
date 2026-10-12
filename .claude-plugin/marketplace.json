@@ -8,6 +8,11 @@
       "name": "baton",
       "source": "./mods/baton",
       "description": "Context budget guard and handoff relay."
+    },
+    {
+      "name": "relay",
+      "source": "./mods/relay",
+      "description": "Role buttons: Codex review, adversarial review, hand-over, Claude verify."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."
