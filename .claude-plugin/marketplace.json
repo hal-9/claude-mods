@@ -1,0 +1,14 @@
+{
+  "name": "claude-mods",
+  "owner": {
+    "name": "hal-9"
+  },
+  "plugins": [
+    {
+      "name": "baton",
+      "source": "./mods/baton",
+      "description": "Context budget guard and handoff relay."
+    }
+  ],
+  "description": "Private marketplace of Claude Code mods by hal-9."
+}

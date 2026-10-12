@@ -1,0 +1,29 @@
+{
+  "name": "baton",
+  "version": "0.1.0",
+  "description": "Context budget guard and handoff relay: measures real context use per model request, stops subagents that run too long or too big, and hands work over to a fresh session before the main agent drowns.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mainWrapUpPercent": {
+      "type": "number",
+      "title": "Main agent wrap-up at %",
+      "description": "Context fill (percent of the window) at which the main agent is told to wrap up and write a handoff.",
+      "default": 70
+    },
+    "agentMaxPercent": {
+      "type": "number",
+      "title": "Subagent context limit %",
+      "description": "A subagent whose context passes this percent is stopped and asked for a handoff of the remaining work.",
+      "default": 30
+    },
+    "agentMaxMinutes": {
+      "type": "number",
+      "title": "Subagent time limit (minutes)",
+      "description": "A subagent running longer than this is stopped and asked for a handoff of the remaining work.",
+      "default": 20
+    }
+  },
+  "author": {
+    "name": "Tuncay Aydin"
+  }
+}
