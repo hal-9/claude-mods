@@ -1,8 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, SessionUsage } from 'claude-code'
 
-const WINDOW = 200_000
+type Win = { model: number; compact?: number; autoCompactAt?: number }
 const usage = (tokens: number) => ({
   input_tokens: tokens,
   output_tokens: 0,
@@ -12,14 +12,17 @@ const usage = (tokens: number) => ({
 })
 
 // The engine beneath the plugin: every op and event the mod raises is answered here.
-function engineBelow(on: On, reports: { tokens: number }) {
+function engineBelow(on: On, reports: { tokens: number }, win: Win = { model: 200_000 }) {
   mock.store(on)
   const session = mock.session(on)
   const clock = mock.clock(on, { now: 1_000_000 })
   const status = { line: undefined as string | undefined }
   const sessionId = { value: 'session-1' }
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: WINDOW, percent: 1 }, rateLimits: [] } }))
+  on('session.usage', ($, e) => {
+    const breakdown = e.breakdown ? { rawMaxTokens: win.compact ?? win.model, autoCompactThreshold: win.autoCompactAt } : undefined
+    return { value: { startedAt: 0, context: { window: win.model, percent: 1, breakdown }, rateLimits: [] } as unknown as SessionUsage }
+  })
   on('session.id', () => ({ value: sessionId.value }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('tool.register', () => ({ value: { tool: 'mcp__baton__handoff' } }))
@@ -59,16 +62,17 @@ test('measures main context per request and asks for a wrap-up past the limit', 
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   await step($, 0)
-  expect(status.line).toContain('ctx 10% (20k/200k) Δ+20k')
+  expect(status.line).toContain('ctx 10% (20k/200k) Δ+20k · work 0, wrap-up at 140k')
 
   reports.tokens = 150_000
   await step($, 1)
-  expect(status.line).toContain('ctx 75% (150k/200k) Δ+130k')
+  expect(status.line).toContain('ctx 75% (150k/200k) Δ+130k · work 130k')
   expect(status.line).toContain('WRAP UP')
 
   const notes = notesTo(session.appended(), undefined)
   expect(notes.length).toBe(1)
   expect(notes[0]).toContain('Wrap up now')
+  expect(notes[0]).toContain('70% of the 200k compaction window')
 
   // no second nag until it grew another 5 points
   reports.tokens = 156_000
@@ -79,7 +83,45 @@ test('measures main context per request and asks for a wrap-up past the limit', 
   expect(notesTo(session.appended(), undefined).length).toBe(2)
 })
 
-test('stops a subagent past its context limit and notes the handoff for main', async ($, on) => {
+test('wraps up at the absolute working cap on a large window', { options: { mainWrapUpPercent: 90 } }, async ($, on) => {
+  const reports = { tokens: 240_000 }
+  const { session, status } = engineBelow(on, reports, { model: 1_000_000 })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  await step($, 0)
+  expect(status.line).toContain('ctx 24% (240k/1000k) Δ+240k · work 0, wrap-up at 490k')
+
+  reports.tokens = 480_000
+  await step($, 1)
+  expect(notesTo(session.appended(), undefined).length).toBe(0)
+
+  reports.tokens = 495_000
+  await step($, 2)
+  const notes = notesTo(session.appended(), undefined)
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toContain('250k working tokens above the 240k baseline')
+})
+
+test('wraps up before the engine auto-compacts', { options: { mainWrapUpPercent: 80, maxWorkingTokens: 600_000 } }, async ($, on) => {
+  const reports = { tokens: 100_000 }
+  const { session, status } = engineBelow(on, reports, { model: 1_000_000, compact: 700_000, autoCompactAt: 600_000 })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  await step($, 0)
+  expect(status.line).toContain('wrap-up at 510k')
+
+  reports.tokens = 500_000
+  await step($, 1)
+  expect(notesTo(session.appended(), undefined).length).toBe(0)
+
+  reports.tokens = 520_000
+  await step($, 2)
+  const notes = notesTo(session.appended(), undefined)
+  expect(notes.length).toBe(1)
+  expect(notes[0]).toContain('85% of the 600k auto-compaction threshold')
+})
+
+test('stops a subagent past its working limit and notes the handoff for main', async ($, on) => {
   const reports = { tokens: 10_000 }
   const { session } = engineBelow(on, reports)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -88,15 +130,19 @@ test('stops a subagent past its context limit and notes the handoff for main', a
   await step($, 0, 'agent-1')
   expect(notesTo(session.appended(), 'agent-1').length).toBe(0)
 
-  reports.tokens = 70_000
+  reports.tokens = 69_000
   await step($, 1, 'agent-1')
+  expect(notesTo(session.appended(), 'agent-1').length).toBe(0)
+
+  reports.tokens = 70_000
+  await step($, 2, 'agent-1')
   const stops = notesTo(session.appended(), 'agent-1')
   expect(stops.length).toBe(1)
   expect(stops[0]).toContain('STOP')
-  expect(stops[0]).toContain('35%')
+  expect(stops[0]).toContain('working context grew to 60k tokens (limit 60k, 30% of the compaction window)')
 
   reports.tokens = 72_000
-  await step($, 2, 'agent-1')
+  await step($, 3, 'agent-1')
   expect(notesTo(session.appended(), 'agent-1').length).toBe(1)
 
   await $.turn.complete({ answer: 'handoff...', durationMs: 1, isAborted: false, turnId: 'turn-1', agentId: 'agent-1', reason: 'answer' })

@@ -1,19 +1,19 @@
 {
   "name": "baton",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Context budget guard and handoff relay: measures real context use per model request, stops subagents that run too long or too big, and hands work over to a fresh session before the main agent drowns.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "mainWrapUpPercent": {
       "type": "number",
-      "title": "Main agent wrap-up at %",
-      "description": "Context fill (percent of the window) at which the main agent is told to wrap up and write a handoff.",
+      "title": "Main agent wrap-up at % of compaction window",
+      "description": "Main is told to wrap up and write a handoff past this percent of the auto-compaction window. It also wraps up at 85% of the auto-compaction threshold and at the working-token cap, whichever comes first.",
       "default": 70
     },
     "agentMaxPercent": {
       "type": "number",
-      "title": "Subagent context limit %",
-      "description": "A subagent whose context passes this percent is stopped and asked for a handoff of the remaining work.",
+      "title": "Subagent working limit % of compaction window",
+      "description": "A subagent whose working context (tokens added after its first request) passes this percent of the compaction window, or the working-token cap, is stopped and asked for a handoff.",
       "default": 30
     },
     "agentMaxMinutes": {
@@ -21,6 +21,12 @@
       "title": "Subagent time limit (minutes)",
       "description": "A subagent running longer than this is stopped and asked for a handoff of the remaining work.",
       "default": 20
+    },
+    "maxWorkingTokens": {
+      "type": "number",
+      "title": "Working-token cap",
+      "description": "Absolute cap on working context above the baseline, for main and subagents alike. Long-context quality degrades with absolute length, not with the fraction of the window.",
+      "default": 250000
     }
   },
   "author": {

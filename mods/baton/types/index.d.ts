@@ -10,7 +10,23 @@ export type LoopStats = {
   steps: number
   /** Growth since the previous request. */
   lastDelta: number
+  /** The loop's first request: system prompt, tools, memory. Fixed overhead, not work. */
+  baseline: number
+  /** tokens minus baseline: what the work added. */
+  working: number
+  /** The token count at which baton acts on this loop (wrap-up for main, stop for a subagent). */
+  limit: number
   updatedAt: number
+}
+
+/** The engine's context figures baton measures against. */
+export type Window = {
+  /** The model's context window. */
+  model: number
+  /** The auto-compaction window; smaller than `model` when one is configured. */
+  compact: number
+  /** Where the engine auto-compacts; absent when auto-compaction is off. */
+  autoCompactAt?: number
 }
 
 export type AgentStats = LoopStats & {
@@ -57,6 +73,7 @@ declare module 'claude-code' {
       phase: Phase
       /** The engine's own status-line percent, from session.measure, for cross-checking. */
       enginePercent: number | null
+      window: Window | null
     }
   }
 }

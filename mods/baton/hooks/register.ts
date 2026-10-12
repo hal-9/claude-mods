@@ -1,16 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { AgentStats, Bump, Handoff, LoopStats, Phase } from '../types'
+import type { AgentStats, Bump, Handoff, LoopStats, Window } from '../types'
 
 const main = atom({ plugin: 'baton', key: 'main' } as const, null)
 const agents = atom({ plugin: 'baton', key: 'agents' } as const, {})
 const bumps = atom({ plugin: 'baton', key: 'bumps' } as const, [])
 const phase = atom({ plugin: 'baton', key: 'phase' } as const, 'ok')
 const enginePercent = atom({ plugin: 'baton', key: 'enginePercent' } as const, null)
+const windowState = atom({ plugin: 'baton', key: 'window' } as const, null)
 
 const HANDOFF_TOOL = 'mcp__baton__handoff'
 const STORE_KEY = 'handoff'
+// Wrap up this far into the engine's auto-compaction threshold, so the handoff lands before the summary does.
+const COMPACT_HEADROOM = 0.85
 
 type $ = EngineInterface
 
@@ -34,7 +37,7 @@ Your reply is forwarded to the main agent, which starts a fresh agent on the rem
 const stoppedNote = (a: AgentStats) =>
   `[baton] Subagent "${a.description}" (${a.id}) was stopped early: ${a.stopReason}. Its result is a HANDOFF of the remaining work, not a finished task. Spawn a fresh subagent whose prompt is that handoff to continue; do not redo what it lists as done.`
 
-const wrapUpNote = (percent: number, limit: number) => `[baton] Your context is at ${percent}% (wrap-up limit ${limit}%). Wrap up now:
+const wrapUpNote = (reason: string) => `[baton] ${reason}. Wrap up now:
 1. Start no new work. Let running subagents finish; spawn new ones only to continue a stopped one.
 2. Update the files your work touched (task plan, docs, memory) so nothing lives only in this conversation.
 3. Call the ${HANDOFF_TOOL} tool with a handoff for the REMAINING work only: done, remaining, exact next step, gotchas, files.
@@ -45,17 +48,49 @@ const handoffNote = (h: Handoff) => `[baton] Handoff from your previous session 
 ${h.text}`
 
 // Filled by register(); top-level so the helpers below can read it.
-const cfg = { mainMax: 70, agentMax: 30, agentMaxMs: 20 * 60_000 }
+const cfg = { mainMax: 70, agentMax: 30, agentMaxMs: 20 * 60_000, maxWorking: 250_000 }
 // ponytail: one window for every loop; subagents on another model read slightly off.
-let window = 200_000
+const win: Window = { model: 200_000, compact: 200_000 }
+
+// The engine's figures: model window, compaction window, auto-compact threshold.
+async function refreshWindow($: $) {
+  try {
+    const u = await $.session.usage({ breakdown: 'summary' })
+    win.model = u.context.window || win.model
+    win.compact = u.context.breakdown?.rawMaxTokens || win.model
+    win.autoCompactAt = u.context.breakdown?.autoCompactThreshold
+  } catch {
+    // not bound yet; keep what we have
+  }
+  await update($, windowState, () => ({ ...win }))
+}
+
+// Where main must wrap up: the tightest of its percent of the compaction window, the headroom
+// before auto-compaction, and the absolute working budget above its baseline. `[limit, why]`.
+function mainLimit(baseline: number): [number, string] {
+  const candidates: [number, string][] = [
+    [Math.round((cfg.mainMax / 100) * win.compact), `${cfg.mainMax}% of the ${k(win.compact)} compaction window`],
+    [baseline + cfg.maxWorking, `${k(cfg.maxWorking)} working tokens above the ${k(baseline)} baseline`],
+  ]
+  if (win.autoCompactAt) {
+    candidates.push([Math.round(COMPACT_HEADROOM * win.autoCompactAt), `${Math.round(COMPACT_HEADROOM * 100)}% of the ${k(win.autoCompactAt)} auto-compaction threshold`])
+  }
+  return candidates.reduce((a, b) => (b[0] < a[0] ? b : a))
+}
+
+// A subagent's working budget: its percent of the compaction window or the absolute cap, whichever is smaller.
+function agentWorkingLimit(): [number, string] {
+  const byPercent = Math.round((cfg.agentMax / 100) * win.compact)
+  return byPercent < cfg.maxWorking ? [byPercent, `${cfg.agentMax}% of the compaction window`] : [cfg.maxWorking, 'the absolute working cap']
+}
 
 async function showStatus($: $) {
   const m = await read($, main)
   if (!m) return $.ui.status(undefined)
   const running = Object.values(await read($, agents)).filter(a => !a.endedAt)
   const ph = await read($, phase)
-  let line = `baton ctx ${m.percent}% (${k(m.tokens)}/${k(m.window)}) Δ${m.lastDelta >= 0 ? '+' : ''}${k(m.lastDelta)}`
-  if (running.length) line += ` · agents ${running.length} (max ${Math.max(...running.map(a => a.percent))}%)`
+  let line = `baton ctx ${m.percent}% (${k(m.tokens)}/${k(m.window)}) Δ${m.lastDelta >= 0 ? '+' : ''}${k(m.lastDelta)} · work ${k(m.working)}, wrap-up at ${k(m.limit)}`
+  if (running.length) line += ` · agents ${running.length} (max work ${k(Math.max(...running.map(a => a.working)))})`
   if (ph === 'wrap-up') line += ` · WRAP UP → call ${HANDOFF_TOOL}`
   if (ph === 'handoff-written') line += ' · handoff saved → start a fresh session'
   $.ui.status(line)
@@ -80,21 +115,17 @@ async function checkDurations($: $) {
   }
 }
 
-
 export const register: Register = (on, options) => {
   cfg.mainMax = Number(options.mainWrapUpPercent ?? 70)
   cfg.agentMax = Number(options.agentMaxPercent ?? 30)
   cfg.agentMaxMs = Number(options.agentMaxMinutes ?? 20) * 60_000
+  cfg.maxWorking = Number(options.maxWorkingTokens ?? 250_000)
   const lastTools: Record<string, string[]> = {}
   let nagAt = 0
   let handoff: Handoff | null = null
 
   on('session.start', async ($, e, next) => {
-    try {
-      window = (await $.session.usage()).context.window || window
-    } catch {
-      // not bound yet; keep the default
-    }
+    await refreshWindow($)
     await $.tool.register({
       name: 'handoff',
       description:
@@ -141,9 +172,13 @@ export const register: Register = (on, options) => {
     if ('agentId' in r && r.agentId) {
       const id = r.agentId
       const now = await $.clock.now()
+      const [limit] = agentWorkingLimit()
       await update($, agents, all => ({
         ...all,
-        [id]: { id, description: e.description, type: e.subagentType, startedAt: now, tokens: 0, window, percent: 0, steps: 0, lastDelta: 0, updatedAt: now },
+        [id]: {
+          id, description: e.description, type: e.subagentType, startedAt: now,
+          tokens: 0, window: win.model, percent: 0, steps: 0, lastDelta: 0, baseline: 0, working: 0, limit, updatedAt: now,
+        },
       }))
     }
     return r
@@ -157,32 +192,40 @@ export const register: Register = (on, options) => {
     const tools = lastTools[key] ?? []
     lastTools[key] = r.toolUses.map(t => t.name)
     const tokens = contextOf(r.usage)
-    const percent = Math.round((tokens / window) * 100)
-    const grow = (prev: LoopStats | null | undefined): LoopStats => ({
-      tokens, window, percent, steps: (prev?.steps ?? 0) + 1, lastDelta: tokens - (prev?.tokens ?? 0), updatedAt: now,
-    })
+    const percent = Math.round((tokens / win.model) * 100)
+    // The first request's size is the loop's baseline (system prompt, tools, memory); work is what grew after it.
+    const baselineOf = (prev: LoopStats | null | undefined) => (prev?.steps ? prev.baseline : tokens)
+    const grow = (prev: LoopStats | null | undefined, limit: number): LoopStats => {
+      const baseline = baselineOf(prev)
+      return { tokens, window: win.model, percent, steps: (prev?.steps ?? 0) + 1, lastDelta: tokens - (prev?.tokens ?? 0), baseline, working: tokens - baseline, limit, updatedAt: now }
+    }
     let delta = 0
 
     if (e.agentId) {
       const id = e.agentId
-      const all = await read($, agents)
-      const prev = all[id] ?? { id, description: '(unlisted)', type: 'unknown', startedAt: now, ...grow(null), tokens: 0 }
-      const next_ = { ...prev, ...grow(prev) }
-      delta = next_.lastDelta
-      await update($, agents, cur => ({ ...cur, [id]: { ...(cur[id] ?? prev), ...grow(cur[id] ?? prev) } }))
-      if (!next_.stoppedAt && percent >= cfg.agentMax) {
-        await stopAgent($, next_, `your context is at ${percent}% (limit ${cfg.agentMax}%)`)
+      const [workLimit, why] = agentWorkingLimit()
+      const prev = (await read($, agents))[id]
+      const stats: AgentStats = {
+        ...(prev ?? { id, description: '(unlisted)', type: 'unknown', startedAt: now }),
+        ...grow(prev, baselineOf(prev) + workLimit),
+      }
+      delta = stats.lastDelta
+      await update($, agents, cur => ({ ...cur, [id]: stats }))
+      if (!stats.stoppedAt && stats.working >= workLimit) {
+        await stopAgent($, stats, `your working context grew to ${k(stats.working)} tokens (limit ${k(workLimit)}, ${why})`)
       }
     } else {
       const prev = await read($, main)
-      delta = tokens - (prev?.tokens ?? 0)
-      await update($, main, cur => grow(cur))
+      const [limit, why] = mainLimit(baselineOf(prev))
+      const stats = grow(prev, limit)
+      delta = stats.lastDelta
+      await update($, main, () => stats)
       const ph = await read($, phase)
-      if (ph !== 'handoff-written' && percent >= cfg.mainMax && percent >= nagAt + 5) {
+      if (ph !== 'handoff-written' && tokens >= limit && percent >= nagAt + 5) {
         nagAt = percent
         await update($, phase, () => 'wrap-up')
-        await $.session.append({ message: { type: 'user', content: [text(wrapUpNote(percent, cfg.mainMax))] } })
-        $.ui.toast(`baton: context at ${percent}%, wrapping up`)
+        await $.session.append({ message: { type: 'user', content: [text(wrapUpNote(`Your context is at ${k(tokens)} tokens (${percent}%), past the wrap-up limit of ${k(limit)}: ${why}`))] } })
+        $.ui.toast(`baton: context at ${k(tokens)} (${percent}%), wrapping up`)
       }
     }
 
@@ -207,7 +250,7 @@ export const register: Register = (on, options) => {
   })
 
   on('session.measure', async ($, e, next) => {
-    if (e.context.window) window = e.context.window
+    await refreshWindow($)
     await update($, enginePercent, () => e.context.percent ?? null)
     return next(e)
   })
@@ -238,18 +281,21 @@ export const register: Register = (on, options) => {
     const list = Object.values(await read($, agents))
     const stored = (await $.store.get(STORE_KEY)) as Handoff | undefined
     const now = await $.clock.now()
+    const [, mainWhy] = mainLimit(m?.baseline ?? 0)
+    const [agentLimit, agentWhy] = agentWorkingLimit()
     const lines = [
       `baton · context budget`,
+      `window: ${k(win.model)} model, ${k(win.compact)} compaction${win.autoCompactAt ? `, auto-compacts at ${k(win.autoCompactAt)}` : ', auto-compaction off'}`,
       m
-        ? `main: ${m.percent}% (${k(m.tokens)} / ${k(m.window)}), ${m.steps} requests${eng === null ? '' : `, engine says ${eng}%`}`
+        ? `main: ${m.percent}% (${k(m.tokens)} / ${k(m.window)}), baseline ${k(m.baseline)}, working ${k(m.working)}, ${m.steps} requests${eng === null ? '' : `, engine says ${eng}%`}`
         : 'main: no model request measured yet',
-      `phase: ${ph} (wrap-up at ${cfg.mainMax}%)`,
-      `agents (limit ${cfg.agentMax}% / ${minutes(cfg.agentMaxMs)} min):`,
+      `phase: ${ph}${m ? ` (wrap-up at ${k(m.limit)}: ${mainWhy})` : ''}`,
+      `agents (working limit ${k(agentLimit)}: ${agentWhy}; ${minutes(cfg.agentMaxMs)} min):`,
       ...(list.length
         ? list.map(a => {
             const state = a.endedAt ? 'ended  ' : a.stoppedAt ? 'stopped' : 'running'
             const reason = a.stopReason ? ` · ${a.stopReason}` : ''
-            return `  ${state} ${String(a.percent).padStart(3)}% ${String(minutes((a.endedAt ?? now) - a.startedAt)).padStart(3)} min  "${a.description}"${reason}`
+            return `  ${state} work ${k(a.working).padStart(5)} ${String(minutes((a.endedAt ?? now) - a.startedAt)).padStart(3)} min  "${a.description}"${reason}`
           })
         : ['  none']),
       'biggest context bumps:',
