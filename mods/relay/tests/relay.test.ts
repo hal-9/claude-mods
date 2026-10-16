@@ -16,6 +16,8 @@ function engineBelow(on: On) {
   on('command.register', () => ({ value: { command: 'relay' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.toast', () => ({ value: undefined }))
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({}))
+  on('ui.render', { component: 'Pane' }, ($, e) => $.ui.resolve(e).Box({}))
   on('fs.read', () => ({ value: 'reading store.ts\nchecking load()' }))
   on('prompt.submit', ($, e) => {
     submitted.push(e.text)
@@ -26,9 +28,10 @@ function engineBelow(on: On) {
     runs.push([...e.argv])
     switch (e.argv[2]) {
       case 'review':
-        return ok({ jobId: 'review-1' })
+        // The companion answers a review only once it is done; the plugin adopts the job from the listing meanwhile.
+        return ok({ review: 'Review', codex: { status: 0, stdout: 'one race' } })
       case 'status':
-        return ok({ job: { status: 'completed', logFile: '/log' } })
+        return e.argv[3] === '--json' ? ok({ running: [{ id: 'review-1', logFile: '/log' }] }) : ok({ job: { status: 'completed', logFile: '/log' } })
       case 'result':
         return ok({ storedJob: { result: { result: { verdict: 'needs_changes', summary: 'one race', findings: [FINDING], next_steps: [] } } } })
       default:
@@ -47,13 +50,17 @@ test('check runs a background Codex review, shows its finding and turns it into 
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100 },
   })
   await band.press({ key: 'check' })
+  await clock.advance(0)
 
   expect(runs[0]?.[1]).toBe('/home/t/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs')
-  expect(runs[0]?.slice(2)).toEqual(['review', '--background', '--json'])
+  expect(runs[0]?.slice(2)).toEqual(['review', '--json'])
+  expect(await band.find({ text: /codex review 0:00/ })).toBeUndefined()
+
+  await clock.advance(1500)
   expect(await band.find({ text: /codex review/ })).toBeDefined()
 
-  await clock.advance(2500)
-  expect(runs.map(r => r[2])).toEqual(['review', 'status', 'result'])
+  await clock.advance(1000)
+  expect(runs.map(r => r[2])).toEqual(['review', 'status', 'status', 'result'])
 
   const pane = await $.ui.mount({
     plugin: 'relay', surface: 'terminal', component: 'Pane', requestId: 'relay',

@@ -57,21 +57,42 @@ async function addJob($: $, job: Job) {
   void $.ui.open({ id: PANE, title: 'relay' })
 }
 
-async function run($: $, args: string[]) {
-  const { exitCode, stdout, stderr } = await $.process.run([...companion, ...args, '--json'], { env, timeoutMs: 60_000 })
+async function run($: $, args: string[], timeoutMs = 60_000) {
+  const { exitCode, stdout, stderr } = await $.process.run([...companion, ...args, '--json'], { env, timeoutMs })
   if (exitCode !== 0) throw new Error(stderr.trim() || `codex-companion exited ${exitCode}`)
   return JSON.parse(stdout) as Record<string, any>
 }
 
-async function startCodex($: $, role: 'check' | 'adversarial' | 'hand', extra: string[]) {
-  const sub = role === 'check' ? 'review' : role === 'adversarial' ? 'adversarial-review' : 'task'
-  const model = String(opts.codexModel ?? '')
+const toastError = ($: $, error: unknown) => $.ui.toast(`relay: ${error instanceof Error ? error.message : String(error)}`)
+
+// A review runs inside the companion's own process until it is done (`--background` only queues tasks), so the
+// call is left running for up to ten minutes and the job is adopted from the companion's listing once it is on disk.
+async function adopt($: $, role: 'check' | 'adversarial', known: Set<string>) {
   try {
-    const payload = await run($, [sub, '--background', ...(model ? ['--model', model] : []), ...extra])
-    await addJob($, { id: String(payload.jobId), role, status: 'running', startedAt: await $.clock.now(), log: '' })
+    const { running } = (await run($, ['status'])) as { running?: { id: string; logFile?: string }[] }
+    const fresh = (running ?? []).find(j => !known.has(j.id))
+    if (!fresh) return $.ui.toast(`relay: ${LABEL[role]} did not start`)
+    await addJob($, { id: fresh.id, role, status: 'running', startedAt: await $.clock.now(), log: '', logFile: fresh.logFile })
   } catch (error) {
-    $.ui.toast(`relay: ${error instanceof Error ? error.message : String(error)}`)
+    toastError($, error)
   }
+}
+
+async function startCodex($: $, role: 'check' | 'adversarial' | 'hand', extra: string[]) {
+  const model = String(opts.codexModel ?? '')
+  const modelArgs = model ? ['--model', model] : []
+  if (role === 'hand') {
+    try {
+      const payload = await run($, ['task', '--background', ...modelArgs, ...extra])
+      await addJob($, { id: String(payload.jobId), role, status: 'running', startedAt: await $.clock.now(), log: '' })
+    } catch (error) {
+      toastError($, error)
+    }
+    return
+  }
+  const known = new Set((await getJobs($)).map(j => j.id))
+  void run($, [role === 'check' ? 'review' : 'adversarial-review', ...modelArgs, ...extra], 600_000).catch(error => toastError($, error))
+  $.clock.after(1500, () => void adopt($, role, known))
 }
 
 async function startVerify($: $) {
@@ -185,13 +206,18 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The desktop drops a press whose handler runs past ~10 s, and a Codex start can take that long: presses only schedule the work.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
     const now = await $.clock.now()
     const running = (await getJobs($)).filter(j => j.status === 'running')
+    // Another mod's band (cache-meter) rides along above the buttons; the engine's own band is empty.
+    const below = await next(e)
 
     return (
+      <Box flexDirection="column" gap="xs">
+        {below.type !== 'engine' && below}
       <Box>
         <Text dimColor>relay </Text>
         {running.map(j => (
@@ -199,13 +225,14 @@ export const register: Register = (on, options) => {
             {LABEL[j.role]} <Text dimColor>{minutes(now - j.startedAt)}</Text>{' '}
           </Text>
         ))}
-        <Button key="check" hotkey="c" label="check" dimColor onPress={() => startCodex($, 'check', [])} />
+        <Button key="check" hotkey="c" label="check" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'check', []))} />
         <Text> </Text>
-        <Button key="adversarial" hotkey="a" label="adversarial" dimColor onPress={() => startCodex($, 'adversarial', [])} />
+        <Button key="adversarial" hotkey="a" label="adversarial" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'adversarial', []))} />
         <Text> </Text>
         <Button key="hand" hotkey="h" label="hand over" dimColor onPress={() => $.prompt.fill({ text: '/relay hand ', mode: 'insert' })} />
         <Text> </Text>
-        <Button key="verify" hotkey="v" label="verify" dimColor onPress={() => startVerify($)} />
+        <Button key="verify" hotkey="v" label="verify" dimColor onPress={() => $.clock.after(0, () => void startVerify($))} />
+      </Box>
       </Box>
     )
   })
@@ -232,7 +259,7 @@ export const register: Register = (on, options) => {
               </Text>
               <Text> </Text>
               {job.status === 'running' && job.role !== 'verify' && (
-                <Button key={`cancel-${job.id}`} label="cancel" dimColor onPress={() => run($, ['cancel', job.id]).catch(() => undefined)} />
+                <Button key={`cancel-${job.id}`} label="cancel" dimColor onPress={() => $.clock.after(0, () => void run($, ['cancel', job.id]).catch(() => undefined))} />
               )}
               {job.status !== 'running' && (
                 <Button key={`clear-${job.id}`} label="clear" dimColor onPress={() => removeJob($, job.id)} />
