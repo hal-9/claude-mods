@@ -18,6 +18,11 @@
       "name": "mod-switch",
       "source": "./mods/mod-switch",
       "description": "Footer menu that switches your mods on and off per session."
+    },
+    {
+      "name": "cache-meter",
+      "source": "./mods/cache-meter",
+      "description": "Footer meter: prompt-cache countdown, cache hit rate, context fill and a Compact button."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."
