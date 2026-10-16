@@ -13,6 +13,11 @@
       "name": "relay",
       "source": "./mods/relay",
       "description": "Role buttons: Codex review, adversarial review, hand-over, Claude verify."
+    },
+    {
+      "name": "mod-switch",
+      "source": "./mods/mod-switch",
+      "description": "Footer menu that switches your mods on and off per session."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."

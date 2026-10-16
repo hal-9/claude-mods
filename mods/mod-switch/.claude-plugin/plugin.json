@@ -1,6 +1,6 @@
 {
   "name": "mod-switch",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A mods button in the prompt footer opens a popover of every installed mod with switches that enable or disable them at user scope.",
   "types": "./types/index.d.ts",
   "author": { "name": "Tuncay Aydin" },

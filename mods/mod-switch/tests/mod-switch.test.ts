@@ -37,6 +37,7 @@ function engineBelow(on: On, surface: 'desktop' | 'terminal') {
     return { text: '' }
   })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({}))
+  on('ui.render', { component: 'SessionMode' }, ($, e) => $.ui.resolve(e).Text({ dimColor: true, children: e.props.modes.join(' & ') }))
   on('process.run', ($, e) => {
     runs.push([...e.argv])
     return out('')

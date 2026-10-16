@@ -97,14 +97,16 @@ async function apply($: $, mod: Mod, isOn: boolean) {
 }
 
 export const register: Register = on => {
-  on('ui.render', { component: 'SessionMode' }, async ($, e) => {
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const modes = e.props.modes.join(' & ')
     const open = await getOpen($)
+    // Another mod's footer (cache-meter) rides along; the engine's own is redrawn as its mode labels.
+    const below = await next(e)
 
     return (
-      <Box>
-        {modes && <Text dimColor>{modes} </Text>}
+      <Box gap="sm" alignItems="center">
+        {below.type !== 'engine' ? below : modes && <Text dimColor>{modes}</Text>}
         <Button key="toggle-menu" plain dimColor={!open} onPress={() => setOpen($, !open)}>
           <Text color={open ? 'claude' : undefined}>⚙ mods {open ? '▾' : '▴'}</Text>
         </Button>
