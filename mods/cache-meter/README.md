@@ -1,6 +1,6 @@
 # cache-meter
 
-A meter in the prompt footer, next to the mode labels:
+A meter in the band above the prompt (relay's buttons sit under it):
 
 ```
 ● cache 52m ▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▯ 95% hit · ○ context 8% (auto-compact 95%) [Compact]
@@ -27,4 +27,4 @@ The engine does not expose which cache TTL a session uses, so pick the one your 
 /plugin install cache-meter --marketplace hal-9/claude-mods
 ```
 
-Plays along with `mod-switch`: whichever of the two draws the footer embeds the other's.
+Plays along with `relay`: whichever of the two draws the band embeds the other's.

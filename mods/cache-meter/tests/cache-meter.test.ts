@@ -29,8 +29,8 @@ function engineBelow(on: On, reports: { usage: ReturnType<typeof usage> }) {
   on('turn.step', async function* ($, e) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: reports.usage }
   })
-  // A mod beneath (mod-switch) draws its own footer; the meter keeps it.
-  on('ui.render', { component: 'SessionMode' }, ($, e) => $.ui.resolve(e).Text({ dimColor: true, children: `${e.props.modes.join(' & ')} ⚙ mods` }))
+  // A mod beneath (relay) draws its own band; the meter keeps it under the meter.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ dimColor: true, children: 'relay [check]' }))
   return { clock, compacts, toasts }
 }
 
@@ -45,13 +45,16 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const reports = { usage: usage(19_000, 1_000, 0, 500) }
     const { clock, compacts } = engineBelow(on, reports)
     await $.session.start({ cwd: '/repo', surface, isInteractive: true })
-    const footer = await $.ui.mount({ plugin: 'cache-meter', surface, component: 'SessionMode', props: { modes: ['focus'] } })
+    const footer = await $.ui.mount({
+      plugin: 'cache-meter', surface, component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
+    })
 
     // Before the first response the engine's own footer stands.
     expect(await footer.find({ text: /cache/ })).toBeUndefined()
 
     await step($, 1)
-    expect(await footer.find({ text: /focus ⚙ mods/ })).toBeDefined()
+    expect(await footer.find({ text: /relay \[check\]/ })).toBeDefined()
     expect(await footer.find({ text: /60m/ })).toBeDefined()
     expect(await footer.find({ text: /95%/ })).toBeDefined()
     // 19_000 + 1_000 + 500 = 20_500 of 200_000 → 10%; auto-compact at 190_000 → 95%.
@@ -74,7 +77,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
 test('a 5m TTL counts down from five minutes', { options: { cacheTtl: '5m' } }, async ($, on) => {
   engineBelow(on, { usage: usage(0, 10_000, 0) })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  const footer = await $.ui.mount({ plugin: 'cache-meter', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
+  const footer = await $.ui.mount({
+    plugin: 'cache-meter', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
+  })
   await step($, 1)
   expect(await footer.find({ text: /5m/ })).toBeDefined()
   expect(await footer.find({ text: /0% hit/ })).toBeDefined()

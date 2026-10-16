@@ -1,7 +1,7 @@
 {
   "name": "cache-meter",
-  "version": "0.1.0",
-  "description": "Footer meter: prompt-cache countdown, cache hit rate of the last request, context fill against auto-compact, and a Compact button.",
+  "version": "0.1.1",
+  "description": "Band above the prompt: prompt-cache countdown, cache hit rate of the last request, context fill against auto-compact, and a Compact button.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "cacheTtl": {

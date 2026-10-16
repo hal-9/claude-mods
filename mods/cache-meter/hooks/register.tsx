@@ -88,9 +88,9 @@ export const register: Register = (on, options) => {
     return r
   })
 
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const { value: m } = await $.state.get(READING)
-    if (!m) return next(e)
+    if (!m || e.props.hasSurvey) return next(e)
     await $.state.get(TICK)
 
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -98,35 +98,36 @@ export const register: Register = (on, options) => {
     const isWarm = left > 0
     const [hit, miss] = bar(m.hitPercent)
     const ctx = level(m.percent)
-    // Another mod's footer (mod-switch's ⚙ button) rides along; the engine's own is redrawn as its mode labels.
+    // Another mod's band (relay's buttons) rides along beneath the meter; the engine's own band is empty.
     const below = await next(e)
-    const modes = e.props.modes.join(' & ')
 
     return (
-      <Box gap="sm" alignItems="center">
-        {below.type !== 'engine' ? below : modes && <Text dimColor>{modes}</Text>}
-        <Text tabular>
-          <Text color={isWarm ? 'success' : 'inactive'}>● </Text>
-          <Text dimColor>cache </Text>
-          <Text color={isWarm ? 'success' : 'inactive'} weight="medium">
-            {isWarm ? `${minutes(left)}m` : 'cold'}
+      <Box flexDirection="column" gap="xs">
+        <Box gap="sm" alignItems="center">
+          <Text tabular>
+            <Text color={isWarm ? 'success' : 'inactive'}>● </Text>
+            <Text dimColor>cache </Text>
+            <Text color={isWarm ? 'success' : 'inactive'} weight="medium">
+              {isWarm ? `${minutes(left)}m` : 'cold'}
+            </Text>
+            <Text> </Text>
+            <Text color="success">{hit}</Text>
+            <Text color="inactive">{miss}</Text>
+            <Text weight="semibold"> {m.hitPercent}%</Text>
+            <Text dimColor> hit</Text>
           </Text>
-          <Text> </Text>
-          <Text color="success">{hit}</Text>
-          <Text color="inactive">{miss}</Text>
-          <Text weight="semibold"> {m.hitPercent}%</Text>
-          <Text dimColor> hit</Text>
-        </Text>
-        <Text dimColor>·</Text>
-        <Text tabular>
-          <Text color={ctx}>{glyph(m.percent)} </Text>
-          <Text dimColor>context </Text>
-          <Text color={ctx} weight="semibold">
-            {m.percent}%
+          <Text dimColor>·</Text>
+          <Text tabular>
+            <Text color={ctx}>{glyph(m.percent)} </Text>
+            <Text dimColor>context </Text>
+            <Text color={ctx} weight="semibold">
+              {m.percent}%
+            </Text>
+            {m.autoCompactPercent !== null && <Text dimColor> (auto-compact {m.autoCompactPercent}%)</Text>}
           </Text>
-          {m.autoCompactPercent !== null && <Text dimColor> (auto-compact {m.autoCompactPercent}%)</Text>}
-        </Text>
-        <Button key="compact" label="Compact" onPress={() => void compact($)} />
+          <Button key="compact" label="Compact" onPress={() => void compact($)} />
+        </Box>
+        {below.type !== 'engine' && below}
       </Box>
     )
   })

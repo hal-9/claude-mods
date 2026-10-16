@@ -22,7 +22,7 @@
     {
       "name": "cache-meter",
       "source": "./mods/cache-meter",
-      "description": "Footer meter: prompt-cache countdown, cache hit rate, context fill and a Compact button."
+      "description": "Band above the prompt: prompt-cache countdown, cache hit rate, context fill and a Compact button."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."
