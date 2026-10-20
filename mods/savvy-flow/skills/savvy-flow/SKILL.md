@@ -33,6 +33,7 @@ When delegating, pass the task's `title` verbatim as the Agent tool's `descripti
 2. Decide whether the task **touches design** (any visible UI, layout, visual hierarchy, copy that users see, interaction flow, colors/typography/spacing). If yes → go to section 2 before any implementation.
 3. Break the work into **tasks** with:
    - a clear, self-contained brief (what, where, constraints, definition of done, how to verify);
+   - the **test seams** where behaviour changes: the public interface or entry point each new test drives, so the worker builds test-first there. Mechanical tasks (renames, config) name none;
    - explicit dependencies between tasks;
    - a **tier** per task (section 3).
 4. Present the plan to the user in a compact form: numbered tasks, tier, dependency order. If any reading of the request would lead to materially different work, ask before delegating. Otherwise proceed.
@@ -103,6 +104,13 @@ For each returned task:
    - **Escalate**: take over only for design fixes or one-line corrections where a round trip would cost more than the fix.
 
 Cap at two return rounds per task; after that, re-plan or ask the user.
+
+## 5a. Final review (orchestrator only)
+
+Once every task is accepted:
+1. Run the project's full test suite once. Failures go back to the tier that owns the code, as defects.
+2. Call the Skill tool with `code-review` (the project's own when it ships one, otherwise `mattpocock-skills:code-review`) on the changes since the base branch. The spec to check against is the PR description when one exists, otherwise the plan from section 1.
+3. Treat its findings like worker reports: verify each against the code. Real defects go back to a worker as one batched brief (same tier cap as section 5); nits are deferred and listed at close.
 
 ## 6. Close
 

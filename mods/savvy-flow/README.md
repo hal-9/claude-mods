@@ -2,6 +2,8 @@
 
 An orchestrated delivery flow for Claude Code. Run `/savvy-flow <task>` (`/savvy-flow:savvy-flow` when installed as a plugin): the session model plans, owns design, delegates implementation to tiered worker subagents and adversarially reviews what they return.
 
+Fork of [johnnyvizz/claude-kit](https://github.com/johnnyvizz/claude-kit/tree/main/plugins/savvy-flow) (MIT). Changes in 1.3.0, borrowed from Matt Pocock's `implement` skill: briefs name test seams and workers build test-first there with `tdd`; after all tasks are accepted the orchestrator runs the full suite once and a `code-review` pass against the PR description or plan.
+
 ## What ships
 
 - **Skill** `savvy-flow`: the orchestrator's playbook.
