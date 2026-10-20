@@ -209,15 +209,30 @@ export const register: Register = (on, options) => {
   // The desktop drops a press whose handler runs past ~10 s, and a Codex start can take that long: presses only schedule the work.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Text } = ui
     const now = await $.clock.now()
     const running = (await getJobs($)).filter(j => j.status === 'running')
     // Another mod's band (cache-meter) rides along above the buttons; the engine's own band is empty.
     const below = await next(e)
+    const isDesktop = e.surface !== 'terminal' && 'Svg' in ui
+    const w = Math.min(1600, (e.props.bodyColumns || 100) * 8)
+    // A hairline between that band and the buttons.
+    const divider = isDesktop ? (
+      <ui.Svg
+        source={`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="1"><style>rect{fill:#0000001a}@media (prefers-color-scheme: dark){rect{fill:#ffffff1f}}</style><rect width="${w}" height="1"/></svg>`}
+        alt=""
+        width={w}
+        height={1}
+      />
+    ) : (
+      <Text dimColor>{'─'.repeat(Math.max(8, (e.props.bodyColumns || 100) - 2))}</Text>
+    )
 
     return (
-      <Box flexDirection="column" gap="xs">
+      <Box flexDirection="column" gap={isDesktop ? 'sm' : 'xs'}>
         {below.type !== 'engine' && below}
+        {below.type !== 'engine' && divider}
       <Box>
         <Text dimColor>relay </Text>
         {running.map(j => (
