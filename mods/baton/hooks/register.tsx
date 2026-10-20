@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, ModelUsage, Register } from 'claude-code'
 
-import type { AgentStats, Bump, Handoff, LoopStats, Window } from '../types'
+import type { AgentStats, Bump, Handoff, LoopStats, Phase, Window } from '../types'
 
 const main = atom({ plugin: 'baton', key: 'main' } as const, null)
 const agents = atom({ plugin: 'baton', key: 'agents' } as const, {})
@@ -115,6 +115,102 @@ async function checkDurations($: $) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The band above the prompt, in cache-meter's look so stacked bands read as one family.
+// The desktop wraps sibling elements, so its row is one SVG.
+
+// $.state refs are read as literals in the file that renders them.
+const MAIN = { plugin: 'baton', key: 'main' } as const
+const AGENTS = { plugin: 'baton', key: 'agents' } as const
+const PHASE = { plugin: 'baton', key: 'phase' } as const
+const COLLAPSED = { plugin: 'baton', key: 'collapsed' } as const
+
+// Collapsed or not, remembered across sessions.
+async function setCollapsed($: $, isCollapsed: boolean) {
+  await $.state.set(COLLAPSED, isCollapsed)
+  await $.store.set('collapsed', isCollapsed)
+}
+
+const ACCENT = '#8f8cf4'
+const WARM = '#5fbf8f'
+const AMBER = '#e0a43a'
+const RED = '#e5675a'
+const FONT = "-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',sans-serif"
+const H = 22
+const BAR_H = 14
+const CELL = 3
+const SEGMENTS = 16
+
+const PILL: Record<Phase, [label: string, hex: string, tone: 'success' | 'warning']> = {
+  ok: ['on track', ACCENT, 'success'],
+  'wrap-up': ['wrap up', AMBER, 'warning'],
+  'handoff-written': ['handoff saved', WARM, 'success'],
+}
+const budgetHex = (p: number) => (p < 70 ? ACCENT : p < 100 ? AMBER : RED)
+const budgetTone = (p: number) => (p < 70 ? 'success' : p < 100 ? 'warning' : 'error')
+
+const noise = (x: number, y: number) => {
+  const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453
+  return s - Math.floor(s)
+}
+// ponytail: per-class width estimate for the system font; every string here is ours.
+const charW = (c: string) => (/[il.,:;'|· ()]/.test(c) ? 0.3 : /[mwMW]/.test(c) ? 0.86 : /[A-Z0-9$%]/.test(c) ? 0.64 : 0.54)
+const textW = (s: string, size: number) => Math.round([...s].reduce((w, c) => w + charW(c), 0) * size)
+
+// A rounded track, dithered up to `percent`, sparse at the start and dense toward the head.
+function ditherBar(x: number, w: number, percent: number, color: string) {
+  const y = (H - BAR_H) / 2
+  const cols = Math.floor((w * Math.min(100, percent)) / 100 / CELL)
+  const dots: string[] = []
+  for (let c = 0; c < cols; c++) {
+    const density = 0.35 + 0.6 * Math.pow(c / Math.max(1, cols), 1.2)
+    for (let r = 0; r < Math.floor(BAR_H / CELL); r++) {
+      if (noise(c + 3, r) < density) dots.push(`<rect x="${c * CELL + 1}" y="${r * CELL + 1}" width="2" height="2"/>`)
+    }
+  }
+  return `<g transform="translate(${x},${y})"><clipPath id="bb"><rect width="${w}" height="${BAR_H}" rx="${BAR_H / 2}"/></clipPath>
+<rect class="k" width="${w}" height="${BAR_H}" rx="${BAR_H / 2}"/><g clip-path="url(#bb)" fill="${color}">${dots.join('')}</g></g>`
+}
+
+type Figure = { value: string; word: string }
+type BandRow = { phase: Phase; budget: number; used: Figure; agents: Figure | null }
+
+function bandSvg(r: BandRow, barW: number) {
+  const [pill, pillHex] = PILL[r.phase]
+  const parts: string[] = []
+  const figure = (x: number, f: Figure) => {
+    parts.push(`<text x="${x}" y="${H / 2 + 4.5}" font-size="12.5"><tspan class="t" font-weight="600">${f.value}</tspan><tspan class="m" dx="5">${f.word}</tspan></text>`)
+    return x + textW(f.value, 12.5) + 5 + textW(f.word, 12.5)
+  }
+  parts.push(`<circle cx="5" cy="${H / 2}" r="4" fill="${pillHex}"/>`)
+  parts.push(`<text class="t" x="16" y="${H / 2 + 4.5}" font-size="13" font-weight="500">Baton</text>`)
+  // The pill starts where cache-meter's do, so the bands line up.
+  const pillX = 16 + textW('Keepwarm', 13) + 8
+  const pillW = 16 + textW(pill, 11)
+  parts.push(`<rect x="${pillX}" y="${(H - 16) / 2}" width="${pillW}" height="16" rx="8" fill="${pillHex}"/>`)
+  parts.push(`<text x="${pillX + pillW / 2}" y="${H / 2 + 4}" text-anchor="middle" font-size="11" font-weight="600" fill="#ffffff">${pill}</text>`)
+  let x = pillX + pillW + 10
+  parts.push(ditherBar(x, barW, r.budget, budgetHex(r.budget)))
+  x = figure(x + barW + 8, r.used)
+  if (r.agents) {
+    x += 14
+    parts.push(`<rect class="tk" x="${x}" y="${H / 2 - 6}" width="1" height="12"/>`)
+    x = figure(x + 15, r.agents)
+  }
+  const W = x + 4
+  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}" font-variant-numeric="tabular-nums">
+<style>.t{fill:#1f1f1f}.m{fill:#8a8a8a}.k{fill:#e4e4e2}.tk{fill:#c4c4c0}
+@media (prefers-color-scheme: dark){.t{fill:#ececec}.m{fill:#9a9a9a}.k{fill:#2c2c2c}.tk{fill:#4a4a4a}}</style>
+${parts.join('\n')}</svg>`
+  return { W, source }
+}
+
+// A hairline that sets this band apart from the mod bands drawn beneath it.
+const dividerSvg = (w: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="9" viewBox="0 0 ${w} 9" preserveAspectRatio="none"><style>rect{fill:#00000026}@media (prefers-color-scheme: dark){rect{fill:#ffffff38}}</style><rect y="4" width="${w}" height="1"/></svg>`
+
+// ---------------------------------------------------------------------------
+
 export const register: Register = (on, options) => {
   cfg.mainMax = Number(options.mainWrapUpPercent ?? 70)
   cfg.agentMax = Number(options.agentMaxPercent ?? 30)
@@ -153,6 +249,7 @@ export const register: Register = (on, options) => {
         $.ui.toast(`baton: picked up the handoff written ${new Date(stored.writtenAt).toLocaleString()}`)
       }
     }
+    await $.state.set(COLLAPSED, (await $.store.get('collapsed')) === true)
     $.clock.every(30_000, () => void checkDurations($))
     await showStatus($)
     return next(e)
@@ -308,5 +405,84 @@ export const register: Register = (on, options) => {
         : 'handoff: none stored',
     ]
     return { text: lines.join('\n') }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const { value: m } = await $.state.get(MAIN)
+    if (!m || e.props.hasSurvey) return next(e)
+    const { value: all = {} } = await $.state.get(AGENTS)
+    const { value: ph = 'ok' } = await $.state.get(PHASE)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Text } = ui
+    // Another mod's band rides along beneath this one; the engine's own band is empty.
+    const drawn = await next(e)
+    const below = drawn.type !== 'engine' ? drawn : null
+    const isDesktop = e.surface !== 'terminal' && 'Svg' in ui
+    const cols = e.props.bodyColumns || 100
+
+    // How far main is toward its wrap-up limit, and the biggest running subagent.
+    const budget = Math.round((m.tokens / Math.max(1, m.limit)) * 100)
+    const used = { value: k(m.tokens), word: `of ${k(m.limit)} wrap-up` }
+    const running = Object.values(all).filter(a => !a.endedAt)
+    const agents = running.length
+      ? { value: String(running.length), word: `${running.length === 1 ? 'agent' : 'agents'}, max work ${k(Math.max(...running.map(a => a.working)))} of ${k(agentWorkingLimit()[0])}` }
+      : null
+    const [pill, , tone] = PILL[ph]
+    const alt = `baton ${pill}, ${used.value} ${used.word}${agents ? `, ${agents.value} ${agents.word}` : ''}`
+
+    let row
+    if (isDesktop) {
+      const { W, source } = bandSvg({ phase: ph, budget, used, agents }, Math.max(48, Math.min(200, Math.floor((cols * 8 - 520) / 2))))
+      row = <ui.Svg key="baton" source={source} alt={alt} width={W} height={H} />
+    } else {
+      const filled = Math.round((Math.min(100, budget) / 100) * SEGMENTS)
+      row = (
+        <Box key="baton" gap="sm" alignItems="center">
+          <Text tabular>
+            <Text color={tone}>● </Text>
+            <Text dimColor>baton </Text>
+            <Text color={tone} weight="medium">{pill}</Text>
+            <Text> </Text>
+            <Text color={budgetTone(budget)}>{'▮'.repeat(filled)}</Text>
+            <Text color="inactive">{'▯'.repeat(SEGMENTS - filled)}</Text>
+            <Text weight="semibold"> {used.value}</Text>
+            <Text dimColor> {used.word}</Text>
+          </Text>
+          {agents && <Text dimColor>│</Text>}
+          {agents && (
+            <Text tabular>
+              <Text weight="semibold">{agents.value}</Text>
+              <Text dimColor> {agents.word}</Text>
+            </Text>
+          )}
+        </Box>
+      )
+    }
+    // An accordion like cache-meter's and relay's: the header line folds and unfolds the row.
+    const { value: isCollapsed = false } = await $.state.get(COLLAPSED)
+    const band = (
+      <Box key="band" flexDirection="column" gap={isDesktop ? 'xs' : 0} paddingX={isDesktop ? 'xs' : 0} hover={{ backgroundColor: '#8080801a' }}>
+        <Button
+          key="toggle"
+          plain
+          dimColor
+          hover={{ dimColor: false, bold: true }}
+          label={`${isCollapsed ? '▸' : '▾'} baton · ${pill} · ${used.value} of ${k(m.limit)}${agents ? ` · ${agents.value} ${running.length === 1 ? 'agent' : 'agents'}` : ''}`}
+          onPress={() => void setCollapsed($, !isCollapsed)}
+        />
+        {!isCollapsed && row}
+      </Box>
+    )
+    if (!below) return band
+    const dividerW = Math.max(180, Math.min(1600, cols * 8 - 96))
+    return (
+      <Box flexDirection="column" gap={isDesktop ? 'sm' : 0} paddingTop={isDesktop ? 'xs' : 0}>
+        {band}
+        {isDesktop
+          ? <ui.Svg source={dividerSvg(dividerW)} alt="" width={dividerW} height={9} />
+          : <Text dimColor>{'─'.repeat(Math.max(8, cols - 2))}</Text>}
+        {below}
+      </Box>
+    )
   })
 }

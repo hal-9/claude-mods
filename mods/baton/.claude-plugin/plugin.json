@@ -1,6 +1,6 @@
 {
   "name": "baton",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Context budget guard and handoff relay: measures real context use per model request, stops subagents that run too long or too big, and hands work over to a fresh session before the main agent drowns.",
   "types": "./types/index.d.ts",
   "userConfig": {

@@ -201,3 +201,51 @@ test('saves a handoff and injects it into the next session in the same directory
   await $.turn.start({ text: 'new work', turnId: 'turn-5' })
   expect(notesTo(session.appended(), undefined).length).toBe(1)
 })
+
+type Mounted = Pick<Awaited<ReturnType<Engine['ui']['mount']>>, 'find' | 'findAll'>
+
+// What the band shows: text on the terminal, the row SVG's alt on the desktop.
+async function shows(ui: Mounted, re: RegExp) {
+  return (await ui.find({ text: re })) ?? (await ui.findAll({ type: 'Svg' })).find(s => re.test(String(s.props.alt)))
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: draws the wrap-up budget, running agents and phase in a band above the prompt`, async ($, on) => {
+    const reports = { tokens: 20_000 }
+    engineBelow(on, reports)
+    // A mod beneath (cache-meter) draws its own band; baton keeps it under its row.
+    on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ dimColor: true, children: 'cache 60m' }))
+    await $.session.start({ cwd: '/repo', surface, isInteractive: true })
+    const band = await $.ui.mount({
+      plugin: 'baton', surface, component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
+    })
+
+    // Nothing measured yet: only the band beneath stands.
+    expect(await shows(band, /baton/)).toBeUndefined()
+
+    await step($, 0)
+    expect(await shows(band, /baton on track.*20k of 140k wrap-up/)).toBeDefined()
+    expect(await band.find({ text: /cache 60m/ })).toBeDefined()
+
+    await $.agent.spawn(spawnOf('Explore auth'))
+    reports.tokens = 30_000
+    await step($, 0, 'agent-1')
+    expect(await shows(band, /1 agent, max work 0 of 60k/)).toBeDefined()
+
+    reports.tokens = 150_000
+    await step($, 1)
+    expect(await shows(band, /baton wrap up.*150k of 140k wrap-up/)).toBeDefined()
+
+    await $.tool.call({ tool: 'mcp__baton__handoff', text: '## Remaining\n- finish' })
+    expect(await shows(band, /baton handoff saved/)).toBeDefined()
+
+    // The header folds the row to one line and unfolds it again.
+    await band.press({ key: 'toggle' })
+    expect(await band.find({ text: /▸ baton · handoff saved · 150k of 140k/ })).toBeDefined()
+    expect(await shows(band, /baton handoff saved.*wrap-up/)).toBeUndefined()
+    expect(await band.find({ text: /cache 60m/ })).toBeDefined()
+    await band.press({ key: 'toggle' })
+    expect(await shows(band, /baton handoff saved.*wrap-up/)).toBeDefined()
+  })
+}

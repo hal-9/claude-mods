@@ -12,6 +12,8 @@ baton is a Claude Code mod that keeps long sessions and subagent orchestration f
    baton ctx 42% (84k/200k) Δ+3.1k · work 60k, wrap-up at 140k · agents 2 (max work 28k)
    ```
 
+   A band above the prompt shows the same budget at a glance: the phase (`on track`, `wrap up`, `handoff saved`), a bar of main's context toward its wrap-up limit, and the running subagents with the biggest one's working context against its limit. It stacks with other mods' bands (cache-meter, relay) and draws in their style. Its header line `▾ baton · …` folds the band to one line and back; the choice is kept across sessions. mod-switch turns baton off entirely.
+
 2. **Guards subagents.** A subagent whose working context (tokens added after its first request) passes 30 % of the compaction window or the 250k cap, or that runs longer than 20 minutes, gets a stop order injected into its conversation: finish nothing new, reply with a handoff of the remaining work (done, remaining, exact next step, gotchas). Its reply reaches the main agent as the Agent tool result, together with a note from baton: this is a handoff, spawn a fresh subagent with it, do not redo what is done.
 
 3. **Wraps up the main agent before the engine compacts.** Main is told to wrap up at the tightest of three limits: 70 % of the auto-compaction window, 85 % of the engine's auto-compaction threshold, and 250k working tokens above its baseline. It starts nothing new, lets subagents finish, updates the files the work touched, then calls the `handoff` tool with the remaining work. The status line switches to `WRAP UP`. If the agent keeps going, baton reminds it every 5 points.
@@ -32,7 +34,7 @@ Answer `y` to add the marketplace, pick the user scope, accept or change the thr
 
 ## Use
 
-- Work as usual. Watch the status line.
+- Work as usual. Watch the band above the prompt or the status line.
 - When it says `WRAP UP`, let the agent finish; it calls `handoff` by itself. Then start a fresh session in the same directory. That is all.
 - `/baton` prints the report. `/baton clear` drops a stored handoff you do not want picked up.
 

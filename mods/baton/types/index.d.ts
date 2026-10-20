@@ -74,6 +74,8 @@ declare module 'claude-code' {
       /** The engine's own status-line percent, from session.measure, for cross-checking. */
       enginePercent: number | null
       window: Window | null
+      /** The band above the prompt is folded to its header line; kept in $.store across sessions. */
+      collapsed: boolean
     }
   }
 }
