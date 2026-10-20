@@ -23,6 +23,11 @@
       "name": "cache-meter",
       "source": "./mods/cache-meter",
       "description": "Band above the prompt: prompt-cache countdown, cache hit rate, context fill and a Compact button."
+    },
+    {
+      "name": "savvy-flow",
+      "source": "./mods/savvy-flow",
+      "description": "Fork of johnnyvizz/claude-kit savvy-flow: tiered workers build test-first at named seams; a code-review pass closes the flow."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."
