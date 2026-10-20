@@ -10,8 +10,9 @@ const usage = (cacheRead: number, cacheWrite: number, input: number, output = 0)
   model: 'test-model',
 })
 
-function engineBelow(on: On, reports: { usage: ReturnType<typeof usage> }) {
+function engineBelow(on: On, reports: { usage: ReturnType<typeof usage> }, store: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 1_000_000 })
+  mock.store(on, store)
   const compacts = { count: 0 }
   const toasts: string[] = []
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -34,6 +35,13 @@ function engineBelow(on: On, reports: { usage: ReturnType<typeof usage> }) {
   return { clock, compacts, toasts }
 }
 
+type Mounted = Pick<Awaited<ReturnType<Engine['ui']['mount']>>, 'find' | 'findAll'>
+
+// What the meter shows: text on the terminal, the row SVG's alt on the desktop.
+async function shows(ui: Mounted, re: RegExp) {
+  return (await ui.find({ text: re })) ?? (await ui.findAll({ type: 'Svg' })).find(s => re.test(String(s.props.alt)))
+}
+
 async function step($: Engine, index: number) {
   for await (const _chunk of $.turn.step({ turnId: 'turn-1', index, model: 'test-model', messageCount: 1 })) {
     // drain
@@ -51,26 +59,26 @@ for (const surface of ['terminal', 'desktop'] as const) {
     })
 
     // Before the first response the engine's own footer stands.
-    expect(await footer.find({ text: /cache/ })).toBeUndefined()
+    expect(await shows(footer, /cache/)).toBeUndefined()
 
     await step($, 1)
     expect(await footer.find({ text: /relay \[check\]/ })).toBeDefined()
-    expect(await footer.find({ text: /60m/ })).toBeDefined()
-    expect(await footer.find({ text: /95%/ })).toBeDefined()
+    expect(await shows(footer, /60m/)).toBeDefined()
+    expect(await shows(footer, /95%/)).toBeDefined()
     // 19_000 + 1_000 + 500 = 20_500 of 200_000 → 10%; auto-compact at 190_000 → 95%.
-    expect(await footer.find({ text: /context.*10%/ })).toBeDefined()
-    expect(await footer.find({ text: /auto-compact 95%/ })).toBeDefined()
+    expect(await shows(footer, /context.*10%/)).toBeDefined()
+    expect(await shows(footer, /auto-compact 95%/)).toBeDefined()
 
     // The countdown moves with the clock and goes cold past the TTL.
     await clock.advance(25 * 60_000)
-    expect(await footer.find({ text: /35m/ })).toBeDefined()
+    expect(await shows(footer, /35m/)).toBeDefined()
     await clock.advance(40 * 60_000)
-    expect(await footer.find({ text: /cold/ })).toBeDefined()
+    expect(await shows(footer, /cold/)).toBeDefined()
 
     await footer.press({ key: 'compact' })
     expect(compacts.count).toBe(1)
     // Compaction empties the window; the meter waits for the next response.
-    expect(await footer.find({ text: /cache/ })).toBeUndefined()
+    expect(await shows(footer, /cache/)).toBeUndefined()
   })
 }
 
@@ -82,6 +90,41 @@ test('a 5m TTL counts down from five minutes', { options: { cacheTtl: '5m' } }, 
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
   })
   await step($, 1)
-  expect(await footer.find({ text: /5m/ })).toBeDefined()
-  expect(await footer.find({ text: /0% hit/ })).toBeDefined()
+  expect(await shows(footer, /5m/)).toBeDefined()
+  expect(await shows(footer, /0% hit/)).toBeDefined()
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: folds to a one-line summary and back, with a divider above the band beneath`, async ($, on) => {
+    engineBelow(on, { usage: usage(19_000, 1_000, 0, 500) })
+    await $.session.start({ cwd: '/repo', surface, isInteractive: true })
+    const footer = await $.ui.mount({
+      plugin: 'cache-meter', surface, component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
+    })
+    await step($, 1)
+    expect(await footer.find({ key: 'compact' })).toBeDefined()
+    if (surface === 'terminal') expect(await footer.find({ text: /─{8,}/ })).toBeDefined()
+    else expect((await footer.findAll({ type: 'Svg' })).length).toBe(2)
+
+    await footer.press({ key: 'collapse' })
+    expect(await footer.find({ key: 'compact' })).toBeUndefined()
+    expect((await footer.find({ key: 'expand' }))?.text).toMatch(/cache 60m · context 10%/)
+    expect(await footer.find({ text: /relay \[check\]/ })).toBeDefined()
+
+    await footer.press({ key: 'expand' })
+    expect(await footer.find({ key: 'compact' })).toBeDefined()
+  })
+}
+
+test('remembers the folded band across sessions', async ($, on) => {
+  engineBelow(on, { usage: usage(19_000, 1_000, 0, 500) }, { collapsed: true })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const footer = await $.ui.mount({
+    plugin: 'cache-meter', surface: 'terminal', component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
+  })
+  await step($, 1)
+  expect(await footer.find({ key: 'expand' })).toBeDefined()
+  expect(await footer.find({ key: 'compact' })).toBeUndefined()
 })

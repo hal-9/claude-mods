@@ -20,6 +20,8 @@ declare module 'claude-code' {
       reading: Reading | null
       /** A clock tick, bumped every half minute so the countdown redraws. */
       tick: number
+      /** The band is folded to a one-line summary; mirrored to $.store across sessions. */
+      collapsed: boolean
     }
   }
 }
