@@ -216,14 +216,14 @@ export const register: Register = (on, options) => {
     // Another mod's band (cache-meter) rides along above the buttons; the engine's own band is empty.
     const below = await next(e)
     const isDesktop = e.surface !== 'terminal' && 'Svg' in ui
-    const w = Math.min(1600, (e.props.bodyColumns || 100) * 8)
-    // A hairline between that band and the buttons.
+    const w = Math.max(180, Math.min(1600, (e.props.bodyColumns || 100) * 8 - 96))
+    // A hairline between that band and the buttons; 9px tall with the line centred, since a 1px image scaled to the slot rounds away.
     const divider = isDesktop ? (
       <ui.Svg
-        source={`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="1"><style>rect{fill:#0000001a}@media (prefers-color-scheme: dark){rect{fill:#ffffff1f}}</style><rect width="${w}" height="1"/></svg>`}
+        source={`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="9" viewBox="0 0 ${w} 9" preserveAspectRatio="none"><style>rect{fill:#00000026}@media (prefers-color-scheme: dark){rect{fill:#ffffff38}}</style><rect y="4" width="${w}" height="1"/></svg>`}
         alt=""
         width={w}
-        height={1}
+        height={9}
       />
     ) : (
       <Text dimColor>{'─'.repeat(Math.max(8, (e.props.bodyColumns || 100) - 2))}</Text>
