@@ -226,7 +226,7 @@ export const register: Register = (on, options) => {
     const dividerW = Math.max(180, Math.min(1600, cols * 8 - 96))
 
     const divider = isDesktop
-      ? <ui.Svg source={dividerSvg(dividerW)} alt="" width={dividerW} height={9} />
+      ? <ui.Svg source={dividerSvg(dividerW)} alt="separator" width={dividerW} height={9} />
       : <Text dimColor>{'─'.repeat(Math.max(8, cols - 2))}</Text>
     // An accordion: the header line folds and unfolds the rows, and the whole band lights while the pointer is on it.
     const summary = [m && `cache ${countdown}`, m && `context ${m.percent}%`, `keepwarm ${kw.mode === 'on' ? kw.pill : kw.mode}`]
