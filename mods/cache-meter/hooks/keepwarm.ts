@@ -1,12 +1,15 @@
-import type { EngineInterface, Register } from 'claude-code'
-import { statusIcons } from './status-icons'
+// Keepwarm and the cold-send guard, from karanb192/cache-tax 2.3.0 (MIT, see LICENSE.cache-tax).
+// Its own band and cube icon are gone: register.tsx draws the keepwarm row under the meter.
+import type { EngineInterface, On } from 'claude-code'
+
+import { meterCompact, meterStart, meterStep } from './meter'
 
 const TTL_MS = 60 * 60 * 1000
-const PING_AFTER_MS = 50 * 60 * 1000
+export const PING_AFTER_MS = 50 * 60 * 1000
 const MIN_PING_MS = 60 * 1000
 const MAX_RETRIES = 3
 const AUTO_WARM_MS = 3 * 60 * 60 * 1000
-const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
+export const DEFAULT_WINDOW_MS = 6 * 60 * 60 * 1000
 const BIG_TOKENS = 50000
 const PING_PROMPT = 'Reply with the single word: warm'
 const KEY_DEADLINE = 'deadline'
@@ -104,15 +107,15 @@ export function fmtDuration(ms: number): string {
   return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`
 }
 
-function fmtUsd(usd: number | null): string {
+export function fmtUsd(usd: number | null): string {
   return usd == null ? 'n/a' : '$' + (usd >= 100 ? usd.toFixed(0) : usd.toFixed(2))
 }
 
-function fmtTok(n: number): string {
+export function fmtTok(n: number): string {
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
 }
 
-function coldUsd(s: State): number | null {
+export function coldUsd(s: State): number | null {
   const price = priceOf(s.lastModel, s.ctx)
   return price ? s.ctx * price[1] / 1e6 : null
 }
@@ -134,7 +137,7 @@ function breakEvenPings(s: State): number | null {
   return Math.floor(price[1] / price[0])
 }
 
-function isCold(s: State, now: number): boolean {
+export function isCold(s: State, now: number): boolean {
   return s.lastRequestAt > 0 && !s.compacted && now - s.lastRequestAt >= TTL_MS
 }
 
@@ -182,17 +185,21 @@ export function seedFromResume(s: State, e: ResumeFields, now: number): string |
   return `resuming cold. The first message re-writes ${s.ctx.toLocaleString('en-US')} tokens, about ${usd}. /clear and paste a summary if you only need the conclusions.`
 }
 
-function statusText(s: State, now: number): string | undefined {
+/** What the armed window waits for next, such as "ping in 32m". */
+export function nextPing(s: State, now: number): string {
+  return !s.lastRequestAt ? 'waiting for the first turn'
+    : s.compacted ? 'waiting for the first turn after compaction'
+    : isCold(s, now) ? `cold now, first ping ${fmtDuration(s.every)} after the next turn`
+    : s.waitForTurn ? 'nothing to fork yet, first ping after the next turn'
+    : s.retries ? `API busy, ping retry ${s.retries} of ${MAX_RETRIES}`
+    : `ping in ${fmtDuration(s.lastRequestAt + s.every - now)}`
+}
+
+export function statusText(s: State, now: number): string | undefined {
   if (s.stopped) return `keepwarm stopped: ${s.stopped}`
   if (!s.deadline) return undefined
   const pingText = s.last ? ` · last ping read ${fmtTok(s.last.read)} ${fmtUsd(s.last.usd)}` : ''
-  const nextText = !s.lastRequestAt ? ' · waiting for the first turn'
-    : s.compacted ? ' · waiting for the first turn after compaction'
-    : isCold(s, now) ? ` · cold now, first ping ${fmtDuration(s.every)} after the next turn`
-    : s.waitForTurn ? ' · nothing to fork yet, first ping after the next turn'
-    : s.retries ? ` · API busy, ping retry ${s.retries} of ${MAX_RETRIES}`
-    : ` · ping in ${fmtDuration(s.lastRequestAt + s.every - now)}`
-  return `keepwarm ${fmtDuration(s.deadline - now)} left${nextText}${pingText}`
+  return `keepwarm ${fmtDuration(s.deadline - now)} left · ${nextPing(s, now)}${pingText}`
 }
 
 function updateStatus($: EngineInterface, s: State, now: number) {
@@ -234,7 +241,7 @@ async function prune($: EngineInterface, s: State, now: number) {
   }
 }
 
-async function stop($: EngineInterface, s: State, why: string | null, forgetAlways = false) {
+export async function stop($: EngineInterface, s: State, why: string | null, forgetAlways = false) {
   // Set before any await, so a window being opened at the same moment sees the off and does not write itself back.
   if (forgetAlways) {
     s.always = false
@@ -359,7 +366,7 @@ function armedText(s: State, now: number, windowMs: number): string {
 
 // A /keepwarm off after `offs` was read wins: the window it cancelled is not written back. A caller that awaited
 // before deciding to open a window passes the count it read first.
-async function startWindow($: EngineInterface, s: State, windowMs: number, every: number, offs = s.offs) {
+export async function startWindow($: EngineInterface, s: State, windowMs: number, every: number, offs = s.offs) {
   if (s.offs !== offs) return
   const now = await $.clock.now()
   if (s.offs !== offs) return
@@ -409,56 +416,13 @@ export function freshState(): State {
   }
 }
 
-export const register: Register = on => {
-  const s = freshState()
-  let light = false
-  let noColor = false
-
-  on('config.set', { key: 'theme' }, async ($, e, next) => {
-    const result = await next(e)
-    if (result.deny === undefined) {
-      light = typeof result.value === 'string' && result.value.startsWith('light')
-      if (s.hasBand) $.ui.invalidate('ui.render')
-    }
-    return result
-  })
-
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const rest = await next(e)
-    if (!s.hasBand || e.props.hasSurvey) return rest
-    const now = await $.clock.now()
-    const text = statusText(s, now)
-    if (!text || (s.deadline && now >= s.deadline)) return rest
-    const state = s.stopped ? 'stopped' : !s.lastRequestAt || s.compacted ? 'unknown' : isCold(s, now) ? 'cold' : 'warm'
-    const color = noColor ? undefined : state === 'warm' ? 'success' : state === 'cold' ? (light ? '#c15f3c' : '#d97757') : undefined
-    const { Box, Text } = $.ui.resolve(e)
-    const asset = statusIcons[light ? 'light' : 'dark'][state === 'warm' || state === 'cold' ? state : 'neutral']
-    const icon = noColor ? Text({ bold: true, children: ['[>]'] })
-      : e.surface === 'terminal' ? $.ui.resolve(e).Image({ source: { png: asset.png }, columns: 3, rows: 1, alt: '[>]' })
-      : e.surface === 'desktop' ? $.ui.resolve(e).Svg({ source: asset.svg, width: 18, height: 18, alt: 'Cache Tax' })
-      : Text({ color, bold: true, children: ['[>]'] })
-    return Box({ flexDirection: 'column', children: [
-      rest,
-      Box({ flexDirection: 'row', alignItems: 'center', children: [
-        Box({ flexShrink: 0, children: [icon] }),
-        Text({ children: [
-          ' cache-tax · ',
-          Text({ color, bold: true, children: [state] }),
-          ` · ${text}`,
-        ] }),
-      ] }),
-    ] })
-  })
-
+/** Adds the keepwarm and guard hooks to `on`, working on `s`, which the caller's band reads. */
+export function keepwarm(on: On, s: State) {
   on('session.start', async ($, e, next) => {
+    await meterStart($, e.surface)
     const r = await next(e)
     s.hasBand = e.surface === 'terminal' || e.surface === 'desktop'
-    if (s.hasBand) {
-      const theme = (await $.config.list()).find(row => row.key === 'theme')?.value
-      light = typeof theme === 'string' && theme.startsWith('light')
-      noColor = Boolean(await $.env.get('NO_COLOR'))
-      $.ui.status(undefined)
-    }
+    if (s.hasBand) $.ui.status(undefined)
     s.sid = await $.session.id()
     const now = await $.clock.now()
     await prune($, s, now)
@@ -540,7 +504,7 @@ export const register: Register = on => {
       return { text: armedText(s, now, DEFAULT_WINDOW_MS) }
     }
     if (words[0] !== 'status') {
-      const window = parseDuration(words[0])
+      const window = parseDuration(words[0] ?? '')
       if (!window) return { text: 'keepwarm takes a window such as 6h or 90m, or always, off, or status' }
       // "every 2m" is a testing knob and lasts only for the window it was given with.
       let every = PING_AFTER_MS
@@ -605,6 +569,7 @@ export const register: Register = on => {
       const was = s.stepWrites ?? { usd: 0, priced: true }
       s.stepWrites = { usd: was.usd + (price ? u.cache_creation_input_tokens * price[1] / 1e6 : 0), priced: was.priced && price != null }
     }
+    await meterStep($, e, r)
     return r
   })
 
@@ -663,6 +628,7 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => {
     const r = await next(e)
+    await meterCompact($)
     if (!e.agentId) {
       s.compacted = true
       s.ctx = 0

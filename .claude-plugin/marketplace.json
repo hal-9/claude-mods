@@ -22,17 +22,12 @@
     {
       "name": "cache-meter",
       "source": "./mods/cache-meter",
-      "description": "Band above the prompt: prompt-cache countdown, cache hit rate, context fill and a Compact button."
+      "description": "Band above the prompt: cache countdown, hit rate, context fill, Compact, and cache-tax's keepwarm and cold-send guard."
     },
     {
       "name": "savvy-flow",
       "source": "./mods/savvy-flow",
       "description": "Fork of johnnyvizz/claude-kit savvy-flow: tiered workers build test-first at named seams; a code-review pass closes the flow."
-    },
-    {
-      "name": "cache-tax",
-      "source": "./mods/cache-tax",
-      "description": "Copy of karanb192/cache-tax (MIT): /keepwarm pings keep the prompt cache warm during breaks; a cold send is stopped once with its rewrite cost."
     }
   ],
   "description": "Private marketplace of Claude Code mods by hal-9."

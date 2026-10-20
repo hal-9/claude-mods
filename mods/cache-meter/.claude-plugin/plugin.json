@@ -1,7 +1,7 @@
 {
   "name": "cache-meter",
-  "version": "0.2.1",
-  "description": "Band above the prompt: prompt-cache countdown, cache hit rate of the last request, context fill against auto-compact, and a Compact button.",
+  "version": "0.3.2",
+  "description": "Band above the prompt: prompt-cache countdown, cache hit rate, context fill and a Compact button, plus a keepwarm row from cache-tax that pings the cache through breaks and stops a cold send once with its rewrite cost.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "cacheTtl": {

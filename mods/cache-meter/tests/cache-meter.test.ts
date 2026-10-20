@@ -16,6 +16,11 @@ function engineBelow(on: On, reports: { usage: ReturnType<typeof usage> }, store
   const compacts = { count: 0 }
   const toasts: string[] = []
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  // What keepwarm, sharing the band, asks of the engine at start.
+  on('session.id', () => ({ value: 'S1' }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('command.list', () => ({ value: [] }))
+  on('ui.status', () => ({ value: undefined }))
   on('session.usage', () => ({
     value: { startedAt: 0, context: { window: 200_000, percent: 1, breakdown: { rawMaxTokens: 200_000, autoCompactThreshold: 190_000 } }, rateLimits: [] } as unknown as SessionUsage,
   }))
@@ -105,14 +110,16 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await step($, 1)
     expect(await footer.find({ key: 'compact' })).toBeDefined()
     if (surface === 'terminal') expect(await footer.find({ text: /─{8,}/ })).toBeDefined()
-    else expect((await footer.findAll({ type: 'Svg' })).length).toBe(2)
+    // The meter row, the keepwarm row and the divider.
+    else expect((await footer.findAll({ type: 'Svg' })).length).toBe(3)
 
-    await footer.press({ key: 'collapse' })
+    expect((await footer.find({ key: 'toggle' }))?.text).toMatch(/^▾ cache-meter · cache 60m · context 10% · keepwarm off/)
+    await footer.press({ key: 'toggle' })
     expect(await footer.find({ key: 'compact' })).toBeUndefined()
-    expect((await footer.find({ key: 'expand' }))?.text).toMatch(/cache 60m · context 10%/)
+    expect((await footer.find({ key: 'toggle' }))?.text).toMatch(/^▸ cache-meter · cache 60m · context 10%/)
     expect(await footer.find({ text: /relay \[check\]/ })).toBeDefined()
 
-    await footer.press({ key: 'expand' })
+    await footer.press({ key: 'toggle' })
     expect(await footer.find({ key: 'compact' })).toBeDefined()
   })
 }
@@ -125,6 +132,6 @@ test('remembers the folded band across sessions', async ($, on) => {
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 2 }, view: {} },
   })
   await step($, 1)
-  expect(await footer.find({ key: 'expand' })).toBeDefined()
+  expect((await footer.find({ key: 'toggle' }))?.text).toMatch(/^▸/)
   expect(await footer.find({ key: 'compact' })).toBeUndefined()
 })
