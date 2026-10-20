@@ -3,6 +3,7 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import type { Finding, Job, Role } from '../types'
 
 const JOBS = { plugin: 'relay', key: 'jobs' } as const
+const COLLAPSED = { plugin: 'relay', key: 'collapsed' } as const
 
 const PANE = 'relay'
 const POLL_MS = 2500
@@ -61,6 +62,12 @@ async function run($: $, args: string[], timeoutMs = 60_000) {
   const { exitCode, stdout, stderr } = await $.process.run([...companion, ...args, '--json'], { env, timeoutMs })
   if (exitCode !== 0) throw new Error(stderr.trim() || `codex-companion exited ${exitCode}`)
   return JSON.parse(stdout) as Record<string, any>
+}
+
+// Collapsed or not, remembered across sessions.
+async function setCollapsed($: $, isCollapsed: boolean) {
+  await $.state.set(COLLAPSED, isCollapsed)
+  await $.store.set('collapsed', isCollapsed)
 }
 
 const toastError = ($: $, error: unknown) => $.ui.toast(`relay: ${error instanceof Error ? error.message : String(error)}`)
@@ -177,6 +184,7 @@ export const register: Register = (on, options) => {
     const root = String(options.codexPluginRoot || '') || `${home}/.claude/plugins/marketplaces/openai-codex/plugins/codex`
     companion = [await nodePath($), `${root}/scripts/codex-companion.mjs`]
     env = { CLAUDE_PLUGIN_DATA: `${home}/.claude/plugins/data/codex-openai-codex` }
+    await $.state.set(COLLAPSED, (await $.store.get('collapsed')) === true)
     await $.command.register({ name: 'relay', description: 'relay check | adversarial | hand <task> | verify | pane' })
     $.clock.every(POLL_MS, () => void poll($))
     return next(e)
@@ -213,6 +221,7 @@ export const register: Register = (on, options) => {
     const { Box, Button, Text } = ui
     const now = await $.clock.now()
     const running = (await getJobs($)).filter(j => j.status === 'running')
+    const { value: isCollapsed = false } = await $.state.get(COLLAPSED)
     // Another mod's band (cache-meter) rides along above the buttons; the engine's own band is empty.
     const below = await next(e)
     const isDesktop = e.surface !== 'terminal' && 'Svg' in ui
@@ -221,7 +230,7 @@ export const register: Register = (on, options) => {
     const divider = isDesktop ? (
       <ui.Svg
         source={`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="9" viewBox="0 0 ${w} 9" preserveAspectRatio="none"><style>rect{fill:#00000026}@media (prefers-color-scheme: dark){rect{fill:#ffffff38}}</style><rect y="4" width="${w}" height="1"/></svg>`}
-        alt=""
+        alt="separator"
         width={w}
         height={9}
       />
@@ -233,20 +242,29 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column" gap={isDesktop ? 'sm' : 'xs'}>
         {below.type !== 'engine' && below}
         {below.type !== 'engine' && divider}
-      <Box>
-        <Text dimColor>relay </Text>
-        {running.map(j => (
+      <Box key="band" hover={{ backgroundColor: '#8080801a' }}>
+        <Button
+          key="toggle"
+          plain
+          dimColor
+          hover={{ dimColor: false, bold: true }}
+          label={`${isCollapsed ? '▸' : '▾'} relay${isCollapsed && running.length ? ` · ${running.length} running` : ''} `}
+          onPress={() => void setCollapsed($, !isCollapsed)}
+        />
+        {!isCollapsed && running.map(j => (
           <Text key={j.id}>
             {LABEL[j.role]} <Text dimColor>{minutes(now - j.startedAt)}</Text>{' '}
           </Text>
         ))}
-        <Button key="check" hotkey="c" label="check" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'check', []))} />
-        <Text> </Text>
-        <Button key="adversarial" hotkey="a" label="adversarial" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'adversarial', []))} />
-        <Text> </Text>
-        <Button key="hand" hotkey="h" label="hand over" dimColor onPress={() => $.prompt.fill({ text: '/relay hand ', mode: 'insert' })} />
-        <Text> </Text>
-        <Button key="verify" hotkey="v" label="verify" dimColor onPress={() => $.clock.after(0, () => void startVerify($))} />
+        {!isCollapsed && [
+          <Button key="check" hotkey="c" label="check" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'check', []))} />,
+          <Text key="gap-0"> </Text>,
+          <Button key="adversarial" hotkey="a" label="adversarial" dimColor onPress={() => $.clock.after(0, () => void startCodex($, 'adversarial', []))} />,
+          <Text key="gap-1"> </Text>,
+          <Button key="hand" hotkey="h" label="hand over" dimColor onPress={() => $.prompt.fill({ text: '/relay hand ', mode: 'insert' })} />,
+          <Text key="gap-2"> </Text>,
+          <Button key="verify" hotkey="v" label="verify" dimColor onPress={() => $.clock.after(0, () => void startVerify($))} />,
+        ]}
       </Box>
       </Box>
     )

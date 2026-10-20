@@ -31,6 +31,6 @@ export type Job = {
 
 declare module 'claude-code' {
   interface PluginState {
-    relay: { jobs: Job[] }
+    relay: { jobs: Job[]; collapsed: boolean }
   }
 }

@@ -7,8 +7,9 @@ const ok = (payload: unknown) => ({ value: { exitCode: 0, stdout: JSON.stringify
 const FINDING = { severity: 'high', title: 'stale read', body: 'reads the collection before load resolves', file: 'store.ts', line_start: 4, recommendation: 'await load first' }
 
 // The engine beneath the plugin: the Codex companion answered from memory, by subcommand.
-function engineBelow(on: On) {
+function engineBelow(on: On, store: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 1_000_000 })
+  mock.store(on, store)
   mock.env(on, { HOME: '/home/t' })
   const runs: string[][] = []
   const submitted: string[] = []
@@ -74,4 +75,26 @@ test('check runs a background Codex review, shows its finding and turns it into 
   expect(submitted[0]).toMatch(/stale read/)
   expect(submitted[0]).toMatch(/store\.ts:4/)
   expect(submitted[0]).toMatch(/await load first/)
+})
+
+const BAND = { plugin: 'relay', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100 } } as const
+
+test('the header folds the buttons away and back', async ($, on) => {
+  engineBelow(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const band = await $.ui.mount(BAND)
+  expect((await band.find({ key: 'toggle' }))?.text).toMatch(/^▾ relay/)
+  await band.press({ key: 'toggle' })
+  expect((await band.find({ key: 'toggle' }))?.text).toMatch(/^▸ relay/)
+  expect(await band.find({ key: 'check' })).toBeUndefined()
+  await band.press({ key: 'toggle' })
+  expect(await band.find({ key: 'check' })).toBeDefined()
+})
+
+test('remembers the folded band across sessions', async ($, on) => {
+  engineBelow(on, { collapsed: true })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const band = await $.ui.mount(BAND)
+  expect((await band.find({ key: 'toggle' }))?.text).toMatch(/^▸ relay/)
+  expect(await band.find({ key: 'check' })).toBeUndefined()
 })
